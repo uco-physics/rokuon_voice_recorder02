@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Recorder</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+        select { padding: 10px; font-size: 16px; }
+        #status { margin-top: 20px; color: green; }
+        .disabled { background-color: grey; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>オーディオレコーダー</h1>
+    <button id="allowMic" onclick="requestMicPermission()">マイクを許可</button>
+    <div id="recordingControls" style="display: none;">
+        <label for="interval">録音インターバル:</label>
+        <select id="interval">
+            <option value="1">1分</option>
+            <option value="10">10分</option>
+            <option value="30">30分</option>
+            <option value="60">60分</option>
+        </select>
+        <br>
+        <button id="startRecording" onclick="startRecording()">録音開始</button>
+        <button id="stopRecording" onclick="stopRecording()" disabled>録音停止</button>
+    </div>
+    <p id="status"></p>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let allAudioChunks = [];
+        let intervalId;
+        let fileCount = 0;
+        let hash;
+        const statusElement = document.getElementById('status');
+        const allowMicButton = document.getElementById('allowMic');
+        const recordingControls = document.getElementById('recordingControls');
+        const startButton = document.getElementById('startRecording');
+        const stopButton = document.getElementById('stopRecording');
+
+        async function requestMicPermission() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 96000 // 品質と負荷のバランス
+                });
+
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                        allAudioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onerror = event => {
+                    statusElement.textContent = '録音エラー: ' + event.error;
+                };
+
+                allowMicButton.style.display = 'none';
+                recordingControls.style.display = 'block';
+                statusElement.textContent = 'マイクが許可されました。';
+            } catch (err) {
+                statusElement.textContent = 'マイクの許可に失敗しました: ' + err.message;
+            }
+        }
+
+        function generateHash() {
+            return Math.random().toString(36).substring(2, 15);
+        }
+
+        function saveAudio(chunks, filename) {
+            const blob = new Blob(chunks, { type: 'audio/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function startRecording() {
+            if (!mediaRecorder) {
+                statusElement.textContent = 'マイクが許可されていません。';
+                return;
+            }
+
+            audioChunks = [];
+            allAudioChunks = [];
+            fileCount = 0;
+            hash = generateHash();
+            const intervalMinutes = parseInt(document.getElementById('interval').value);
+            const intervalMs = intervalMinutes * 60 * 1000;
+
+            mediaRecorder.start(1000); // 1秒ごとにデータを取得
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            statusElement.textContent = '録音中...';
+
+            function saveIntervalData() {
+                if (mediaRecorder.state === 'recording') {
+                    mediaRecorder.requestData(); // 現在のデータを取得
+                    setTimeout(() => {
+                        if (audioChunks.length > 0) {
+                            saveAudio(audioChunks, `${hash}_${fileCount}.webm`);
+                            fileCount++;
+                            audioChunks = []; // 次のインターバルのためにリセット
+                        }
+                        if (mediaRecorder.state === 'recording') {
+                            intervalId = setTimeout(saveIntervalData, intervalMs);
+                        }
+                    }, 100); // データ収集のための短い待機
+                }
+            }
+
+            intervalId = setTimeout(saveIntervalData, intervalMs);
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                clearTimeout(intervalId);
+                setTimeout(() => {
+                    if (audioChunks.length > 0) {
+                        saveAudio(audioChunks, `${hash}_${fileCount}.webm`);
+                    }
+                    if (allAudioChunks.length > 0) {
+                        saveAudio(allAudioChunks, `full_recording_${hash}.webm`);
+                    }
+                    audioChunks = [];
+                    allAudioChunks = [];
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    statusElement.textContent = '録音が停止しました。';
+                }, 500); // データ収集のための待機
+            }
+        }
+    </script>
+</body>
+</html>
