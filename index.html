@@ -3,14 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Recorder with Waveform</title>
+    <title>Audio Recorder with Responsive Waveform</title>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
-        select { padding: 10px; font-size: 16px; }
-        #status { margin-top: 20px; color: green; }
-        .disabled { background-color: grey; cursor: not-allowed; }
-        #waveform { border: 1px solid #ccc; margin-top: 20px; }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+        }
+        select {
+            padding: 10px;
+            font-size: 16px;
+        }
+        #status {
+            margin-top: 20px;
+            color: green;
+        }
+        .disabled {
+            background-color: grey;
+            cursor: not-allowed;
+        }
+        #waveform {
+            border: 1px solid #ccc;
+            margin-top: 20px;
+            display: block;
+            max-width: 100%;
+        }
+        .waveform-container {
+            width: 80%;
+            max-width: 800px;
+            margin: 0 auto;
+        }
     </style>
 </head>
 <body>
@@ -35,7 +62,9 @@
         <button id="startRecording" onclick="startRecording()">録音開始</button>
         <button id="stopRecording" onclick="stopRecording()" disabled>録音停止</button>
     </div>
-    <canvas id="waveform" width="600" height="100"></canvas>
+    <div class="waveform-container">
+        <canvas id="waveform"></canvas>
+    </div>
     <p id="status"></p>
 
     <!-- lamejsをCDNから読み込み -->
@@ -58,6 +87,18 @@
         const stopButton = document.getElementById('stopRecording');
         const canvas = document.getElementById('waveform');
         const canvasCtx = canvas.getContext('2d');
+        const waveformContainer = document.querySelector('.waveform-container');
+
+        // キャンバスサイズを更新
+        function updateCanvasSize() {
+            const containerWidth = waveformContainer.clientWidth;
+            canvas.width = containerWidth;
+            canvas.height = 100; // 高さは固定（必要に応じて変更可能）
+        }
+
+        // 初期化とリサイズイベント
+        window.addEventListener('resize', updateCanvasSize);
+        updateCanvasSize();
 
         async function requestMicPermission() {
             try {
@@ -67,11 +108,8 @@
                     audioBitsPerSecond: 96000
                 });
 
-                // AudioContextを初期化
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 sourceNode = audioContext.createMediaStreamSource(stream);
-
-                // AnalyserNodeを初期化（波形用）
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 2048;
                 sourceNode.connect(analyser);
@@ -99,7 +137,6 @@
             return Math.random().toString(36).substring(2, 15);
         }
 
-        // WAVファイルのヘッダー生成
         function createWavBuffer(pcmData, sampleRate = 44100) {
             const buffer = new ArrayBuffer(44 + pcmData.length * 2);
             const view = new DataView(buffer);
@@ -131,7 +168,6 @@
             return buffer;
         }
 
-        // WebMをMP3またはWAVに変換
         async function convertToFormat(blob, format) {
             if (format === 'webm') {
                 return blob;
@@ -178,7 +214,6 @@
             URL.revokeObjectURL(url);
         }
 
-        // 波形描画
         function drawWaveform() {
             if (!analyser) return;
 
@@ -235,34 +270,16 @@
             stopButton.disabled = false;
             statusElement.textContent = '録音中...';
 
-            // 波形描画開始
+            updateCanvasSize(); // 録音開始時にキャンバスサイズを更新
             drawWaveform();
-
-            function saveIntervalData() {
-                if (mediaRecorder.state === 'recording') {
-                    mediaRecorder.requestData();
-                    setTimeout(async () => {
-                        if (audioChunks.length > 0) {
-                            await saveAudio(audioChunks, `${hash}_${fileCount}.${format}`, format);
-                            fileCount++;
-                            audioChunks = [];
-                        }
-                        if (mediaRecorder.state === 'recording') {
-                            intervalId = setTimeout(saveIntervalData, intervalMs);
-                        }
-                    }, 100);
-                }
-            }
-
-            intervalId = setTimeout(saveIntervalData, intervalMs);
         }
 
         async function stopRecording() {
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
                 clearTimeout(intervalId);
-                cancelAnimationFrame(animationId); // 波形描画停止
-                canvasCtx.clearRect(0, 0, canvas.width, canvas.height); // キャンバスクリア
+                cancelAnimationFrame(animationId);
+                canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
                 const format = document.getElementById('format').value;
                 setTimeout(async () => {
                     if (audioChunks.length > 0) {
