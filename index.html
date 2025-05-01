@@ -24,11 +24,20 @@
             <option value="60">60分</option>
         </select>
         <br>
+        <label for="format">出力形式:</label>
+        <select id="format">
+            <option value="webm">WebM</option>
+            <option value="mp3">MP3</option>
+            <option value="wav">WAV</option>
+        </select>
+        <br>
         <button id="startRecording" onclick="startRecording()">録音開始</button>
         <button id="stopRecording" onclick="stopRecording()" disabled>録音停止</button>
     </div>
     <p id="status"></p>
 
+    <!-- lamejsをCDNから読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
     <script>
         let mediaRecorder;
         let audioChunks = [];
@@ -36,6 +45,8 @@
         let intervalId;
         let fileCount = 0;
         let hash;
+        let audioContext;
+        let sourceNode;
         const statusElement = document.getElementById('status');
         const allowMicButton = document.getElementById('allowMic');
         const recordingControls = document.getElementById('recordingControls');
@@ -47,10 +58,14 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream, {
                     mimeType: 'audio/webm;codecs=opus',
-                    audioBitsPerSecond: 96000 // 品質と負荷のバランス
+                    audioBitsPerSecond: 96000
                 });
 
-                mediaRecorder.ondataavailable = event => {
+                // AudioContextを初期化（WAVおよびMP3用）
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                sourceNode = audioContext.createMediaStreamSource(stream);
+
+                mediaRecorder.ondataavailable = async event => {
                     if (event.data.size > 0) {
                         audioChunks.push(event.data);
                         allAudioChunks.push(event.data);
@@ -73,8 +88,81 @@
             return Math.random().toString(36).substring(2, 15);
         }
 
-        function saveAudio(chunks, filename) {
-            const blob = new Blob(chunks, { type: 'audio/webm' });
+        // WAVファイルのヘッダー生成
+        function createWavBuffer(pcmData, sampleRate = 44100) {
+            const buffer = new ArrayBuffer(44 + pcmData.length * 2);
+            const view = new DataView(buffer);
+
+            function writeString(view, offset, string) {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            }
+
+            // RIFFヘッダー
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + pcmData.length * 2, true);
+            writeString(view, 8, 'WAVE');
+            // fmtチャンク
+            writeString(view, 12, 'fmt ');
+            view.setUint16(16, 16, true);
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, 1, true); // モノラル
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true); // バイト/サンプル
+            view.setUint16(34, 16, true); // ビット/サンプル
+            // dataチャンク
+            writeString(view, 36, 'data');
+            view.setUint32(40, pcmData.length * 2, true);
+
+            // PCMデータ書き込み
+            for (let i = 0; i < pcmData.length; i++) {
+                view.setInt16(44 + i * 2, pcmData[i] * 32767, true);
+            }
+
+            return buffer;
+        }
+
+        // WebMをMP3またはWAVに変換
+        async function convertToFormat(blob, format) {
+            if (format === 'webm') {
+                return blob;
+            }
+
+            const arrayBuffer = await blob.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+            if (format === 'mp3') {
+                const channelData = audioBuffer.getChannelData(0);
+                const mp3Encoder = new lamejs.Mp3Encoder(1, audioBuffer.sampleRate, 128);
+                const mp3Data = [];
+                const sampleBlockSize = 1152;
+
+                for (let i = 0; i < channelData.length; i += sampleBlockSize) {
+                    const slice = channelData.slice(i, i + sampleBlockSize);
+                    const mp3buf = mp3Encoder.encodeBuffer(slice);
+                    if (mp3buf.length > 0) {
+                        mp3Data.push(mp3buf);
+                    }
+                }
+
+                const mp3buf = mp3Encoder.flush();
+                if (mp3buf.length > 0) {
+                    mp3Data.push(mp3buf);
+                }
+
+                return new Blob(mp3Data, { type: 'audio/mp3' });
+            } else if (format === 'wav') {
+                const channelData = audioBuffer.getChannelData(0);
+                const wavBuffer = createWavBuffer(channelData, audioBuffer.sampleRate);
+                return new Blob([wavBuffer], { type: 'audio/wav' });
+            }
+        }
+
+        async function saveAudio(chunks, filename, format) {
+            let blob = new Blob(chunks, { type: 'audio/webm' });
+            blob = await convertToFormat(blob, format);
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -95,48 +183,50 @@
             hash = generateHash();
             const intervalMinutes = parseInt(document.getElementById('interval').value);
             const intervalMs = intervalMinutes * 60 * 1000;
+            const format = document.getElementById('format').value;
 
-            mediaRecorder.start(1000); // 1秒ごとにデータを取得
+            mediaRecorder.start(1000);
             startButton.disabled = true;
             stopButton.disabled = false;
             statusElement.textContent = '録音中...';
 
             function saveIntervalData() {
                 if (mediaRecorder.state === 'recording') {
-                    mediaRecorder.requestData(); // 現在のデータを取得
-                    setTimeout(() => {
+                    mediaRecorder.requestData();
+                    setTimeout(async () => {
                         if (audioChunks.length > 0) {
-                            saveAudio(audioChunks, `${hash}_${fileCount}.webm`);
+                            await saveAudio(audioChunks, `${hash}_${fileCount}.${format}`, format);
                             fileCount++;
-                            audioChunks = []; // 次のインターバルのためにリセット
+                            audioChunks = [];
                         }
                         if (mediaRecorder.state === 'recording') {
                             intervalId = setTimeout(saveIntervalData, intervalMs);
                         }
-                    }, 100); // データ収集のための短い待機
+                    }, 100);
                 }
             }
 
             intervalId = setTimeout(saveIntervalData, intervalMs);
         }
 
-        function stopRecording() {
+        async function stopRecording() {
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
                 clearTimeout(intervalId);
-                setTimeout(() => {
+                const format = document.getElementById('format').value;
+                setTimeout(async () => {
                     if (audioChunks.length > 0) {
-                        saveAudio(audioChunks, `${hash}_${fileCount}.webm`);
+                        await saveAudio(audioChunks, `${hash}_${fileCount}.${format}`, format);
                     }
                     if (allAudioChunks.length > 0) {
-                        saveAudio(allAudioChunks, `full_recording_${hash}.webm`);
+                        await saveAudio(allAudioChunks, `full_recording_${hash}.${format}`, format);
                     }
                     audioChunks = [];
                     allAudioChunks = [];
                     startButton.disabled = false;
                     stopButton.disabled = true;
                     statusElement.textContent = '録音が停止しました。';
-                }, 500); // データ収集のための待機
+                }, 500);
             }
         }
     </script>
