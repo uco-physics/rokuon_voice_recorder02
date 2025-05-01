@@ -2,13 +2,14 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Audio Recorder with Responsive Waveform</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             text-align: center;
             padding: 20px;
+            margin: 0;
         }
         button {
             padding: 10px 20px;
@@ -31,12 +32,18 @@
             border: 1px solid #ccc;
             margin-top: 20px;
             display: block;
-            max-width: 100%;
+            width: 100%;
         }
         .waveform-container {
-            width: 80%;
-            max-width: 800px;
+            width: 90%;
+            max-width: 500px;
             margin: 0 auto;
+        }
+        @media screen and (max-width: 600px) {
+            .waveform-container {
+                width: 95%;
+                max-width: 400px;
+            }
         }
     </style>
 </head>
@@ -52,7 +59,7 @@
             <option value="60">60分</option>
         </select>
         <br>
-        <label for="format">出力形式:</label>
+        <label for="format">输出形式:</label>
         <select id="format">
             <option value="webm">WebM</option>
             <option value="mp3">MP3</option>
@@ -89,15 +96,26 @@
         const canvasCtx = canvas.getContext('2d');
         const waveformContainer = document.querySelector('.waveform-container');
 
-        // キャンバスサイズを更新
+        // キャンバスサイズを更新（デバウンス付き）
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
         function updateCanvasSize() {
             const containerWidth = waveformContainer.clientWidth;
             canvas.width = containerWidth;
-            canvas.height = 100; // 高さは固定（必要に応じて変更可能）
+            canvas.height = 100; // 高さは固定（必要に応じて変更）
+            console.log(`Canvas size updated: ${canvas.width}x${canvas.height}`);
         }
 
-        // 初期化とリサイズイベント
-        window.addEventListener('resize', updateCanvasSize);
+        // リサイズと向き変更イベント
+        const debouncedUpdateCanvasSize = debounce(updateCanvasSize, 100);
+        window.addEventListener('resize', debouncedUpdateCanvasSize);
+        window.addEventListener('orientationchange', debouncedUpdateCanvasSize);
         updateCanvasSize();
 
         async function requestMicPermission() {
@@ -270,7 +288,7 @@
             stopButton.disabled = false;
             statusElement.textContent = '録音中...';
 
-            updateCanvasSize(); // 録音開始時にキャンバスサイズを更新
+            updateCanvasSize();
             drawWaveform();
         }
 
